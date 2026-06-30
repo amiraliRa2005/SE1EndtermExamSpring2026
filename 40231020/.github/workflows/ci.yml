@@ -1,0 +1,82 @@
+name: CI - Continuous Integration
+
+on:
+  push:
+    branches: [ test ]
+  pull_request:
+    branches: [ test ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: '40231020/backend/package-lock.json'
+    
+    - name: Install dependencies
+      run: |
+        cd 40231020/backend
+        npm install
+    
+    - name: Run tests with coverage
+      run: |
+        cd 40231020/backend
+        npm run test:coverage
+    
+    - name: Generate coverage report as CSV
+      run: |
+        cd 40231020/backend
+        mkdir -p coverage
+        
+        # Create CSV header
+        echo "File,Statements (%),Branches (%),Functions (%),Lines (%),Uncovered Lines" > coverage/coverage-report.csv
+        
+        # Parse coverage summary and append to CSV
+        if [ -f coverage/coverage-summary.json ]; then
+          cat coverage/coverage-summary.json | python3 -c "
+        import json, sys, csv
+        data = json.load(sys.stdin)
+        writer = csv.writer(sys.stdout, quoting=csv.QUOTE_MINIMAL)
+        for file, metrics in data.items():
+            if file == 'total':
+                continue
+            statements = round(metrics['statements']['pct'], 2)
+            branches = round(metrics['branches']['pct'], 2)
+            functions = round(metrics['functions']['pct'], 2)
+            lines = round(metrics['lines']['pct'], 2)
+            uncovered = metrics['lines']['skipped'] if 'skipped' in metrics['lines'] else 0
+            writer.writerow([file, statements, branches, functions, lines, uncovered])
+          " >> coverage/coverage-report.csv
+        else
+          echo "No coverage summary found. Creating empty report." 
+          echo "File,Statements (%),Branches (%),Functions (%),Lines (%),Uncovered Lines" > coverage/coverage-report.csv
+          echo "No data,0,0,0,0,0" >> coverage/coverage-report.csv
+        fi
+        
+        # Display CSV content for debugging
+        cat coverage/coverage-report.csv
+    
+    - name: Upload coverage report as artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-report
+        path: 40231020/backend/coverage/coverage-report.csv
+    
+    - name: Upload coverage report to job summary
+      run: |
+        cd 40231020/backend
+        echo "##  Coverage Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| File | Statements | Branches | Functions | Lines | Uncovered Lines |" >> $GITHUB_STEP_SUMMARY
+        echo "|------|------------|----------|-----------|-------|----------------|" >> $GITHUB_STEP_SUMMARY
+        tail -n +2 coverage/coverage-report.csv | while IFS=, read -r file stmt br func lines uncovered; do
+          echo "| $file | $stmt% | $br% | $func% | $lines% | $uncovered |" >> $GITHUB_STEP_SUMMARY
+        done
